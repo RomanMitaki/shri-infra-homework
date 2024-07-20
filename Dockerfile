@@ -1,20 +1,17 @@
-FROM node:20.10.0-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . ./
-RUN npm run build \
-    && rm -rf ./src \
-    && rm -rf node ./node_modules
+ARG NODE_VERSION=20.10.0
 
-FROM node:20.10.0-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev --no-audit --no-fund
+FROM node:${NODE_VERSION}-alpine AS base
 
-COPY --from=build /app/dist /app/dist
-COPY --from=build /app/src/server /app/src/server
-COPY --from=build /app/src/common /app/src/common
+WORKDIR /usr/src/app
+
+COPY . .
+
+RUN npm ci --verbose
+
+RUN npm run build --verbose
+
+ENV NODE_ENV=production
 
 EXPOSE 3000
+
 CMD ["npm", "start"]
