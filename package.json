@@ -7,8 +7,8 @@
     "watch": "webpack --watch",
     "test": "jest",
     "lint": "eslint ./src",
-    "build:docker": "docker image build -t shri-infra:latest .",
-    "start:docker": "docker run -dp 3000:3000 --name shri-infra shri-infra:latest"
+    "build:docker": "docker build -t shri-infra-homework .",
+    "start:docker": "docker run -p 3000:3000 shri-infra-homework"
   },
   "dependencies": {
     "@bem-react/classname": "^1.6.0",
