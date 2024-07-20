@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Linter checking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+      - run: npm ci
+        name: Dependencies installing
+      - run: npm run lint
+        name: Linters checking
+
+      - if: failure()
+        run: |
+          echo "Lint checking is failed."
+          exit 1
+
+  test:
+    name: Test checking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+      - run: npm ci
+        name: Dependencies installing
+      - run: npm run test
+        name: Test checking
+
+      - if: failure()
+        run: |
+          echo "Test checking is failed."
+          exit 1
+
+  release:
+    name: Release making
+    runs-on: ubuntu-latest
+    env:
+      YANDEX_OAUTH : ${{ secrets.YANDEX_OAUTH  }}
+      YANDEX_DOCKER_REGISTRY_ID: ${{ secrets.YANDEX_DOCKER_REGISTRY_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        name: Switching to main branch
+        with:
+          ref: main
+      - name: Creating release branch
+        run: git checkout -b releases/${{ github.run_number }}
+      - name: Login Docker
+        run: |
+          docker login \
+            --username oauth \
+            --password $YANDEX_OAUTH \
+            cr.yandex
+      - name: Build Docker-image
+        run: npm run build:docker
+      - name: Tag of Docker-image
+        run: |
+          docker tag shri-infra cr.yandex/${{ env.YANDEX_DOCKER_REGISTRY_ID }}/app:${{ github.run_number }}
+          docker tag shri-infra cr.yandex/${{ env.YANDEX_DOCKER_REGISTRY_ID }}/app:${{ github.run_number }}_latest
+      - name: Sending Docker-image
+        run: |
+          docker push cr.yandex/${{ env.YANDEX_DOCKER_REGISTRY_ID }}/app:${{ github.run_number }}
+          docker push cr.yandex/${{ env.YANDEX_DOCKER_REGISTRY_ID }}/app:${{ github.run_number }}_latest
+      - name: Настройка Git для пуша
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+      - name: Тег в ENV
+        run: echo "ENV_TAG=v${{ github.run_number }}" >> $GITHUB_ENV
+      - name: Создание тега с номером текущей версии
+        run: |
+          git tag $ENV_TAG
+          git push origin $ENV_TAG
+
+      - name: Пуш релизной ветки
+        run: git push origin releases/${{ github.run_number }}
+
+
+      - name: Получение предыдущего тега
+        run: echo "PREVIOUS_TAG=v$(expr ${{ github.run_number }} - 1)" >> $GITHUB_ENV
+      - name: Получение логов коммитов между тэгами
+        run: |
+          git fetch
+          git branch --set-upstream-to origin/releases/${{ github.run_number }}
+          echo "COMMITS=$(git log $PREVIOUS_TAG..HEAD --pretty=format:'%h %s')" >> $GITHUB_ENV
+
+      - name: Создание метки времени
+        run: echo "BUILD_TIME=$(TZ=Europe/Moscow date)" >> $GITHUB_ENV
+      - name: Создание задачи релиза
+        uses: actions-ecosystem/action-create-issue@v1
+        env:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          github_token: ${{ secrets.github_token }}
+          title: Релиз ${{ github.run_number }}
+          body: |
+            **Информация о релизе**
+            - Дата: ${{ env.BUILD_TIME }}
+            - Автор: ${{ github.actor }}
+            - Версия: ${{ env.ENV_TAG }}
+            - Docker-образ: cr.yandex/${{ env.YANDEX_DOCKER_REGISTRY_ID }}/app:${{ github.run_number }}
+            - Коммиты: ${{ env.COMMITS }}
+
+      - name: Переключение обратно в main
+        run: git checkout main
+
+      - name: Обновление CHANGELOG.md в main
+        run: |
+          echo "## Релиз ${{ env.ENV_TAG }}" >> CHANGELOG.md
+          echo "Коммит: $(git rev-list -n 1 ${{ env.ENV_TAG }})" >> CHANGELOG.md
+          git add CHANGELOG.md
+          git commit -m "Обновление CHANGELOG.md для релиза ${{ env.ENV_TAG }}"
+      - name: Push changes to main
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: |
+          echo "${{ secrets.DEPLOY_KEY }}" > deploy_key
+          chmod 600 deploy_key
+          eval `ssh-agent -s`
+          ssh-add deploy_key
+          git remote set-url origin git@github.com:${{ github.repository }}.git
+          git push origin main

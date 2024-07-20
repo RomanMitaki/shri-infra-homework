@@ -1,0 +1,49 @@
+name: Prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Версия релиза'
+        required: true
+
+jobs:
+  release:
+    name: Выпуск релиза
+    runs-on: ubuntu-latest
+    env:
+      YANDEX_OAUTH : ${{ secrets.YANDEX_OAUTH  }}
+      YANDEX_DOCKER_REGISTRY_ID: ${{ secrets.YANDEX_DOCKER_REGISTRY_ID }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Подключение по SSH и выполнение команд
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script: |
+            docker login --username oauth --password $YANDEX_OAUTH cr.yandex
+            docker pull cr.yandex/${{ env.YANDEX_DOCKER_REGISTRY_ID }}/app:${{ github.event.inputs.release_version }}_latest
+            echo "Список контейнеров:"
+            docker ps
+            docker stop $(docker ps -q) || true
+            docker rm $(docker ps -a -q) || true
+            docker run -d -p 3000:3000 cr.yandex/${{ env.YANDEX_DOCKER_REGISTRY_ID }}/app:${{ github.event.inputs.release_version }}_latest
+
+      - name: Создание метки времени
+        run: echo "BUILD_TIME=$(TZ=Europe/Moscow date)" >> $GITHUB_ENV
+
+      - name: Вычисление номера Issue
+        run: echo "ISSUE_NUMBER=$(expr ${{ github.event.inputs.release_version }} + 1)" >> $GITHUB_ENV
+
+      - name: Добавление комментария в Issue
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          body: |
+            Релиз ${{ github.event.inputs.release_version }} выкачен в прод.
+            **Дата:** ${{ env.BUILD_TIME }}
+            **Кто запустил:** ${{ github.actor }}
